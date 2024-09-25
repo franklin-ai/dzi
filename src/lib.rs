@@ -1,7 +1,10 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, GenericImageView, ImageError, RgbImage};
+
+const DEFAULT_JPEG_QUALITY: u8 = 75;
 
 #[derive(thiserror::Error, Debug)]
 pub enum TilingError {
@@ -34,6 +37,8 @@ pub struct TileCreator {
     pub tile_overlap: u32,
     /// total number of levels of tiles
     pub levels: u32,
+    /// The quality to use for the JPEG encoder
+    pub jpeg_tile_quality: Option<u8>,
 }
 
 impl TileCreator {
@@ -41,8 +46,9 @@ impl TileCreator {
         image_path: &Path,
         tile_size: u32,
         tile_overlap: u32,
+        jpeg_tile_quality: Option<u8>,
     ) -> DZIResult<Self> {
-        let im = image::io::Reader::open(image_path)?
+        let im = image::ImageReader::open(image_path)?
             .with_guessed_format()?
             .decode()?;
         let (width, height) = im.dimensions();
@@ -78,6 +84,7 @@ impl TileCreator {
             tile_overlap,
             dest_path,
             dzi_file_path,
+            jpeg_tile_quality,
         })
     }
 
@@ -89,6 +96,7 @@ impl TileCreator {
         tile_overlap: u32,
         dest_path: PathBuf,
         dzi_file_path: PathBuf,
+        jpeg_tile_quality: Option<u8>,
     ) -> DZIResult<Self> {
         use TilingError::*;
         let rgb = RgbImage::from_raw(width, height, rgb_data.to_vec())
@@ -103,6 +111,7 @@ impl TileCreator {
             levels,
             tile_size,
             tile_overlap,
+            jpeg_tile_quality,
         })
     }
 
@@ -142,16 +151,21 @@ impl TileCreator {
 
     /// Create tiles for a level
     fn create_level(&self, level: u32) -> DZIResult<()> {
-        let p = self.dest_path.join(format!("{}", level));
-        std::fs::create_dir_all(&p)?;
+        let tile_dir_path = self.dest_path.join(format!("{}", level));
+        std::fs::create_dir_all(&tile_dir_path)?;
         let mut li = self.get_level_image(level)?;
         let (c, r) = self.get_tile_count(level)?;
         for col in 0..c {
             for row in 0..r {
                 let (x, y, x2, y2) = self.get_tile_bounds(level, col, row)?;
                 let tile_image = li.crop(x, y, x2 - x, y2 - y);
-                let tile_path = p.join(format!("{}_{}.jpg", col, row));
-                tile_image.save(tile_path)?;
+                let tile_path = tile_dir_path.join(format!("{}_{}.jpg", col, row));
+                let tile_file = std::fs::File::create(tile_path.as_path())?;
+                let jpeg_encoder = JpegEncoder::new_with_quality(
+                    tile_file,
+                    self.jpeg_tile_quality.unwrap_or(DEFAULT_JPEG_QUALITY),
+                );
+                tile_image.write_with_encoder(jpeg_encoder)?;
             }
         }
         Ok(())
@@ -218,7 +232,7 @@ mod tests {
     #[test]
     fn test_info() {
         let path = PathBuf::from(format!("{}/test_data/test.jpg", env!("CARGO_MANIFEST_DIR")));
-        let ic = TileCreator::new_from_image_path(path.as_path(), 254, 1);
+        let ic = TileCreator::new_from_image_path(path.as_path(), 254, 1, Some(75));
         assert!(ic.is_ok());
         let ic = ic.unwrap();
         assert_eq!(ic.levels, 14);
@@ -258,6 +272,7 @@ mod tests {
             1,
             dest_tiles_dir.clone(),
             dest_dzi_path.clone(),
+            Some(75),
         )
         .unwrap();
 

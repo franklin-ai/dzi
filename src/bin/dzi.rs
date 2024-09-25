@@ -15,7 +15,7 @@ pub fn main() {
         eprintln!("No such file {:?}", &p);
         return;
     }
-    match TileCreator::new_from_image_path(p.as_path(), 254, 1) {
+    match TileCreator::new_from_image_path(p.as_path(), 254, 1, Some(75)) {
         Ok(ic) => match ic.create_tiles() {
             Ok(_) => {}
             Err(e) => {
